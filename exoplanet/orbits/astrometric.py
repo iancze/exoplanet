@@ -82,15 +82,23 @@ from ..theano_ops.kepler import (KeplerOp, CircularContactPointsOp, ContactPoint
 # from these, we can derive more well-known quantities like V1, V2, and the masses of the stars.
 
 # we probably should inherit from KeplerianOrbit, but enough is different for now that we'll duplicate some
+
+
 class AstrometricOrbit(object):
-    """A generalization of a Keplerian orbit with astrometric observations only. This is the simplest kind of astrometric orbit.
+    """A single astrometric orbit of a secondary body relative to a primary body.
 
-    The minimum parameter set consists of 7 parameters: a (angular), i, ω, Ω, e, P and T
+    This is the simplest kind of astrometric orbit (no radial velocities), where only relative positions are measured on the sky. The minimum parameter set consists of 7 parameters: a (angular), i, ω, Ω, e, P and T, where omega and Omega correspond to the secondary star (omega_2 and Omega_2). They are assumed to be in radians. Following the visual binary field, the ascending node is assumed to be the node where the secondary body is receeding (moving away) from the observer.
 
-    omega and Omega correspond to the secondary star (omega_2 and Omega_2). They are assumed to be in radians.
+    With only astrometric information, there is a 180 degree ambiguity to Ω, and so it may be preferred to fit with the quantities (Ω + ω) and (Ω - ω) instead.
 
     Args:
-        positions: A list of separations and position angles
+        period: The orbital periods of the bodies in days.
+        a_ang: The semimajor axes of the orbit in ``arcsec``.
+        t0: The time of a reference transit for each orbits in days.
+        incl: The inclinations of the orbit in radians.
+        ecc: The eccentricities of the orbits. Must be ``0 <= ecc < 1``.
+        omega: The arguments of periastron for the orbits in radians.
+        Omega: The position angle of the ascending node in radians.
     """
     __citations__ = ("astropy",)
 
@@ -99,9 +107,6 @@ class AstrometricOrbit(object):
              model=None, contact_points_kwargs=None,
              **kwargs):
         add_citations_to_model(self.__citations__, model=model)
-
-        # conversion constant
-        self.G_grav = constants.G.to(u.R_sun**3 / u.M_sun / u.day**2).value
 
         self.kepler_op = KeplerOp(**kwargs)
 
@@ -151,7 +156,15 @@ class AstrometricOrbit(object):
         return f
 
     def get_relative_position_XY(self, t):
-        """Get the position of the secondary star relative to the primary star in rho, theta."""
+        """The position of the secondary body relative to the primary body.
+
+        Args:
+            t: The times where the position should be evaluated.
+
+        Returns:
+            The position as specified by X (relative Dec / north) and Y (relative R.A. / east).
+        """
+
 
         f = self._get_true_anomaly(t)
 
@@ -165,6 +178,14 @@ class AstrometricOrbit(object):
         return (X,Y)
 
     def get_relative_position(self, t):
+        """The position of the secondary body relative to the primary body.
+
+        Args:
+            t: The times where the position should be evaluated.
+
+        Returns:
+            The position as specified by rho (arcsec) and theta (radians). Theta will be in the range [-π, π]
+        """
 
         X,Y = self.get_relative_position_XY(t)
 
@@ -172,22 +193,20 @@ class AstrometricOrbit(object):
         rho = tt.sqrt(X**2 + Y**2) # arcsec
         theta = tt.arctan2(Y,X) # radians
 
-        # do something to make the theta's greater than 0
-        # if theta < 0: # ensure that 0 <= theta <= 360
-            # theta += 360.
-
         return (rho, theta)
 
     def get_physical_a_and_mass(self, parallax):
-        """Using a parallax measurement (in arcsec), convert the semi-major axes (in arcseconds) into one measured in AU and compute the total mass of the system."""
+        """Using a parallax measurement (in arcsec), convert the orbit into physical units.
 
-        a_phys = self.a_ang / parallax # [AU]
+        Args:
+            parallax: the parallax (in milliarcseconds (mas))
 
-        # TODO use the proper astropy unit conversions
-        # a_phys needs to be in cm for this calc
-        M_tot = 4 * np.pi**2 * a_phys**3 / G # g
+        Returns:
+            Semi-major axes (in AU) and total mass (M1 + M2) of the system in M_Sun."""
 
-        # constants.G.
+        a_phys = self.a_ang / (parallax * 1e3) # [AU]
+
+        M_tot = (4 * np.pi**2 * (a_phys * u.au)**3 / constants.G).to(u.Msun)
 
         return a_phys, M_tot
 
