@@ -68,9 +68,11 @@ from ..theano_ops.kepler import (KeplerOp, CircularContactPointsOp, ContactPoint
 # add parallax as a real parameter, and a and M_tot as deterministic quantities
 # 3) we have a prior on M_tot (perhaps from photometry of the host star, in the case of an exoplanet). This means we'll want to add M_tot as a parameter, and then add a and ϖ as deterministic parameters.
 
-# we can't even do a barycentric orbit with these limited parameters, only a relative orbit.
+# we can't even do a center-of-mass orbit with these limited parameters, only a relative orbit.
 
+###################
 # Astrometric + RV
+###################
 # 10 minimum parameters (according to Pourbaix)
 # a (angular), i, ω2, Ω2, e, P, T, gamma, ϖ (parallax), and κ
 
@@ -79,11 +81,9 @@ from ..theano_ops.kepler import (KeplerOp, CircularContactPointsOp, ContactPoint
 
 # from these, we can derive more well-known quantities like V1, V2, and the masses of the stars.
 
-# probably should inherit from KeplerianOrbit, but enough is different for now
+# we probably should inherit from KeplerianOrbit, but enough is different for now that we'll duplicate some
 class AstrometricOrbit(object):
-    """A generalization of a Keplerian orbit with astrometric observations. This is the simplest kind of astrometric orbit.
-
-    This orbit can specify the 3D positions and radial velocities of both stars.
+    """A generalization of a Keplerian orbit with astrometric observations only. This is the simplest kind of astrometric orbit.
 
     The minimum parameter set consists of 7 parameters: a (angular), i, ω, Ω, e, P and T
 
@@ -91,11 +91,6 @@ class AstrometricOrbit(object):
 
     Args:
         positions: A list of separations and position angles
-
-        transit_times: A list (with on entry for each planet) of transit times
-            for each transit of each planet in units of days. These times will
-            be used to compute the implied (least squares) ``period`` and
-            ``t0`` so these parameters cannot also be given.
     """
     __citations__ = ("astropy",)
 
@@ -197,6 +192,107 @@ class AstrometricOrbit(object):
         return a_phys, M_tot
 
 
+class AstrometricRVOrbit(object):
+    """A generalization of a Keplerian orbit in 3D space, which can be used with astrometric observations only, or astrometric + RV observations.
+
+    This orbit can specify the 3D positions and radial velocities of both stars.
+
+    10 minimum parameters (according to Pourbaix)
+    a (angular), i, ω2, Ω2, e, P, T, gamma, ϖ (parallax), and κ
+
+    κ (kappa) is defined as the ratio of the primary semimajor axis to the relative semi-major axis
+    κ = a1 / (a1 + a2)
+
+    from these, we can derive more well-known quantities like V1, V2, and the masses of the stars.
+
+    omega and Omega correspond to the secondary star (omega_2 and Omega_2). They are assumed to be in radians.
+
+    Args:
+        positions: A list of separations and position angles
+    """
+    __citations__ = ("astropy",)
+
+    def __init__(self, a_ang=None, t0=0.0, period=None,
+             incl=None, ecc=None, omega=None, Omega=None, gamma=None, parallax=None, kappa=None,
+             model=None, contact_points_kwargs=None,
+             **kwargs):
+        add_citations_to_model(self.__citations__, model=model)
+
+
+        # conversion constant
+        self.G_grav = constants.G.to(u.R_sun**3 / u.M_sun / u.day**2).value
+
+        self.kepler_op = KeplerOp(**kwargs)
+
+        # Parameters
+        self.a_ang = tt.as_tensor_variable(a_ang)
+        self.t0 = tt.as_tensor_variable(t0)
+        self.period = tt.as_tensor_variable(period)
+
+        self.incl = tt.as_tensor_variable(incl)
+        self.cos_incl = tt.cos(self.incl)
+        self.sin_incl = tt.sin(self.incl)
+
+        self.ecc = tt.as_tensor_variable(ecc)
+
+        self.omega = tt.as_tensor_variable(omega)
+        self.cos_omega = tt.cos(self.omega)
+        self.sin_omega = tt.sin(self.omega)
+
+        self.Omega = tt.as_tensor_variable(Omega)
+        self.cos_Omega = tt.cos(self.Omega)
+        self.sin_Omega = tt.sin(self.Omega)
+
+        self.n = 2 * np.pi / self.period # mean motion
+
+        # Set up the contact points calculation
+        if contact_points_kwargs is None:
+            contact_points_kwargs = dict()
+
+        # set up some of the parameters for the contact points op
+        opsw = 1 + self.sin_omega
+        E0 = 2 * tt.arctan2(tt.sqrt(1-self.ecc)*self.cos_omega,
+                            tt.sqrt(1+self.ecc)*opsw)
+        self.M0 = E0 - self.ecc * tt.sin(E0)
+        self.tref = self.t0 - self.M0 / self.n
+        self.contact_points_op = ContactPointsOp(**contact_points_kwargs)
+
+
+        # Update the derived RV quantities
+        #         self.q = self.M_2 / (self.M_tot - self.M_2) # [M2/M1]
+        #         self.P = np.sqrt(4 * np.pi**2 / (C.G * self.M_tot * C.M_sun) * (self.a * C.AU)**3) / (60 * 60 * 24)# [days]
+        #         self.K = np.sqrt(C.G/(1 - self.e**2)) * self.M_2 * C.M_sun * np.sin(self.i * np.pi/180.) / np.sqrt(self.M_tot * C.M_sun * self.a * C.AU) * 1e-5 # [km/s]
+        #
+        #         # If we are going to be repeatedly predicting the orbit at a sequence of dates,
+        #         # just store them to the object.
+        #         self.obs_dates = obs_dates
+        #
+
+    #TODO: not really sure what warp times is here
+    # is it just reshaping the time array appropriately?
+    def _warp_times(self, t):
+        return tt.shape_padright(t)
+
+    def _get_true_anomaly(self, t):
+        M = (self._warp_times(t) - self.tref) * self.n
+        if self.ecc is None:
+            return M
+        _, f = self.kepler_op(M, self.ecc + tt.zeros_like(M))
+        return f
+
+#     def _v1_f(self, f):
+#         '''Calculate the component of A's velocity based on only the inner orbit.
+#         f is the true anomoly of this inner orbit.'''
+#
+#         return self.K * (np.cos(self.omega * np.pi/180 + f) + self.e * np.cos(self.omega * np.pi/180))
+#
+#     def _v2_f(self, f):
+#         '''Calculate the component of B's velocity based on only the inner orbit.
+#         f is the true anomoly of this inner orbit.'''
+#
+#         return self.K/self.q * (np.cos(self.omega_2 * np.pi/180 + f) + self.e * np.cos(self.omega_2 * np.pi/180))
+
+
 
 
 # class Binary:
@@ -216,63 +312,8 @@ class AstrometricOrbit(object):
 #         gamma (float): systemic velocity (km/s)
 #         obs_dates (1D np.array): dates of observation (JD)
 #     '''
+
 #
-#     def __init__(self, a, e, i, omega, Omega, T0, M_tot, M_2, gamma, obs_dates=None, **kwargs):
-#         assert (e >= 0.0) and (e < 1.0), "Eccentricity must be between [0, 1)"
-#         assert (i >= 0.0) and (i <= 180.), "Inclination must be between [0, 180]"
-#         self.a = a # [AU] semi-major axis
-#         self.e = e # eccentricity
-#         self.i = i # [deg] inclination
-#         self.omega = omega # [deg] argument of periastron
-#         self.omega_2 = self.omega + 180
-#         self.Omega = Omega # [deg] east of north
-#         self.T0 = T0 # [JD]
-#         self.M_tot = M_tot # [M_sun]
-#         self.M_2 = M_2 # [M_sun]
-#         self.gamma = gamma # [km/s]
-#
-#         # Update the derived RV quantities
-#         self.q = self.M_2 / (self.M_tot - self.M_2) # [M2/M1]
-#         self.P = np.sqrt(4 * np.pi**2 / (C.G * self.M_tot * C.M_sun) * (self.a * C.AU)**3) / (60 * 60 * 24)# [days]
-#         self.K = np.sqrt(C.G/(1 - self.e**2)) * self.M_2 * C.M_sun * np.sin(self.i * np.pi/180.) / np.sqrt(self.M_tot * C.M_sun * self.a * C.AU) * 1e-5 # [km/s]
-#
-#         # If we are going to be repeatedly predicting the orbit at a sequence of dates,
-#         # just store them to the object.
-#         self.obs_dates = obs_dates
-#
-#
-#     def _theta(self, t):
-#         '''Calculate the true anomoly for the A-B orbit.
-#         Input is in days.'''
-#
-#         # t is input in seconds
-#
-#         # Take a modulus of the period
-#         t = (t - self.T0) % self.P
-#
-#         f = lambda E: E - self.e * np.sin(E) - 2 * np.pi * t/self.P
-#         E0 = 2 * np.pi * t / self.P
-#
-#         E = fsolve(f, E0)[0]
-#
-#         th = 2 * np.arctan(np.sqrt((1 + self.e)/(1 - self.e)) * np.tan(E/2.))
-#
-#         if E < np.pi:
-#             return th
-#         else:
-#             return th + 2 * np.pi
-#
-#     def _v1_f(self, f):
-#         '''Calculate the component of A's velocity based on only the inner orbit.
-#         f is the true anomoly of this inner orbit.'''
-#
-#         return self.K * (np.cos(self.omega * np.pi/180 + f) + self.e * np.cos(self.omega * np.pi/180))
-#
-#     def _v2_f(self, f):
-#         '''Calculate the component of B's velocity based on only the inner orbit.
-#         f is the true anomoly of this inner orbit.'''
-#
-#         return self.K/self.q * (np.cos(self.omega_2 * np.pi/180 + f) + self.e * np.cos(self.omega_2 * np.pi/180))
 #
 #     # Get the position of A in the plane of the orbit, relative to the center of mass
 #     def _xy_A(self, f):
@@ -347,27 +388,6 @@ class AstrometricOrbit(object):
 #
 #         return (X, Y, Z) # [AU]
 #
-#     def _get_periastron_A(self):
-#         return np.array(self._XYZ_A(0))
-#
-#     def _get_periastron_B(self):
-#         return np.array(self._XYZ_B(0))
-#
-#     def _get_periastron_BA(self):
-#         return np.array(self._XYZ_AB(0))
-#
-#     def _get_node_A(self):
-#         '''
-#         The point corresponding to the ascending node
-#         '''
-#         # set f = 2 * pi - omega
-#         return np.array(self._XYZ_A(2 * np.pi - self.omega * np.pi/180))
-#
-#     def _get_node_B(self):
-#         return np.array(self._XYZ_B(2 * np.pi - self.omega_2 * np.pi/180))
-#
-#     def _get_node_BA(self):
-#         return np.array(self._XYZ_AB(2 * np.pi - self.omega_2 * np.pi/180))
 #
 #     def _get_orbit_t(self, t):
 #         '''
