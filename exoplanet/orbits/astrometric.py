@@ -51,6 +51,18 @@ from astropy import units as u
 from ..citations import add_citations_to_model
 from ..theano_ops.kepler import (KeplerOp, CircularContactPointsOp, ContactPointsOp)
 
+# Kepler solver. Need to adjust reference times to use time of periastron, not transit.
+# Currently, the Kepler solver uses
+# M = (self._warp_times(t) - self.tref) * self.n
+# where
+# opsw = 1 + self.sin_omega
+# E0 = 2 * tt.arctan2(tt.sqrt(1-self.ecc)*self.cos_omega,
+#                     tt.sqrt(1+self.ecc)*opsw)
+# self.M0 = E0 - self.ecc * tt.sin(E0)
+# self.tref = self.t0 - self.M0 / self.n
+# self.n = 2 * np.pi / self.period # mean motion
+
+# Here, M0 is probably the mean anomaly at time of transit
 
 # Two classes
 
