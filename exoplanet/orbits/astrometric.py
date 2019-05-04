@@ -149,8 +149,9 @@ class AstrometricOrbit(object):
         opsw = 1 + self.sin_omega
         E0 = 2 * tt.arctan2(tt.sqrt(1-self.ecc)*self.cos_omega,
                             tt.sqrt(1+self.ecc)*opsw)
-        self.M0 = E0 - self.ecc * tt.sin(E0)
-        self.tref = self.t0 - self.M0 / self.n
+        self.M0 = E0 - self.ecc * tt.sin(E0) # calculate mean anomaly at transit?
+        # self.tref = self.t0 - self.M0 / self.n # referenced to time of transit?
+        self.tref = self.t0 # use t0 as time of periastron?
         self.contact_points_op = ContactPointsOp(**contact_points_kwargs)
 
     #TODO: not really sure what warp times is here
