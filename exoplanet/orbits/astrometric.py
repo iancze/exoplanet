@@ -104,9 +104,9 @@ class AstrometricOrbit(object):
     Args:
         period: The orbital periods of the bodies in days.
         a_ang: The semimajor axes of the orbit in ``arcsec``.
-        t0: The time of a reference transit for each orbits in days.
-        incl: The inclinations of the orbit in radians.
-        ecc: The eccentricities of the orbits. Must be ``0 <= ecc < 1``.
+        t0: The time of a reference transit for each orbit in days.
+        incl: The inclination of the orbit in radians.
+        ecc: The eccentricity of the orbits. Must be ``0 <= ecc < 1``.
         omega: The argument of periastron of the secondary in radians.
         Omega: The position angle of the ascending node in radians.
     """
@@ -121,11 +121,11 @@ class AstrometricOrbit(object):
         self.kepler_op = KeplerOp(**kwargs)
 
         # Parameters
-        self.a_ang = tt.as_tensor_variable(a_ang)
+        self.a_ang = tt.as_tensor_variable(a_ang) # arcseconds
         self.t0 = tt.as_tensor_variable(t0)
-        self.period = tt.as_tensor_variable(period)
+        self.period = tt.as_tensor_variable(period) # days
 
-        self.incl = tt.as_tensor_variable(incl)
+        self.incl = tt.as_tensor_variable(incl) # radians
         self.cos_incl = tt.cos(self.incl)
         self.sin_incl = tt.sin(self.incl)
 
@@ -139,7 +139,7 @@ class AstrometricOrbit(object):
         self.cos_Omega = tt.cos(self.Omega)
         self.sin_Omega = tt.sin(self.Omega)
 
-        self.n = 2 * np.pi / self.period # mean motion
+        self.n = 2 * np.pi / self.period # mean motion, radins / day
 
         # Set up the contact points calculation
         if contact_points_kwargs is None:
@@ -154,8 +154,6 @@ class AstrometricOrbit(object):
         self.tref = self.t0 # use t0 as time of periastron
         self.contact_points_op = ContactPointsOp(**contact_points_kwargs)
 
-    #TODO: not really sure what warp times is here
-    # is it just reshaping the time array appropriately?
     def _warp_times(self, t):
         return tt.shape_padright(t)
 
@@ -175,14 +173,11 @@ class AstrometricOrbit(object):
         Returns:
             The position as specified by X (relative Dec / north) and Y (relative R.A. / east).
         """
-
-
         f = self._get_true_anomaly(t)
 
         r = self.a_ang * (1 - self.ecc**2) / (1 + self.ecc * tt.cos(f))
 
         # these calculations assume omega = omega_2
-
         # X is north (DEC)
         # Y is east (RA)
         X = r * (self.cos_Omega * tt.cos(self.omega + f) - self.sin_Omega * tt.sin(self.omega + f) * self.cos_incl)

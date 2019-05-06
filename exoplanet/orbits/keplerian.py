@@ -62,11 +62,11 @@ class KeplerianOrbit(object):
 
     def __init__(self,
                  period=None, a=None, t0=0.0,
-                 incl=None, b=None, duration=None,
-                 ecc=None, omega=None, m_planet=0.0,
+                 incl=None, b=None, duration=None, # Omega
+                 ecc=None, omega=None, m_planet=0.0, # = None
                  m_star=None, r_star=None, rho_star=None,
                  m_planet_units=None, rho_star_units=None,
-                 model=None,
+                 model=None, # kappa
                  contact_points_kwargs=None,
                  **kwargs):
         add_citations_to_model(self.__citations__, model=model)
@@ -86,7 +86,7 @@ class KeplerianOrbit(object):
 
         self.a, self.period, self.rho_star, self.r_star, self.m_star = \
             self._get_consistent_inputs(a, period, rho_star, r_star, m_star,
-                                        rho_star_units)
+                                        rho_star_units) # + m_planet?, #kappa
         self.m_total = self.m_star + self.m_planet
 
         self.n = 2 * np.pi / self.period
